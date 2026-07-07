@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Sales 2.0 - Boxer</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Outfit,sans-serif;background:#f0f4f8;color:#1a202c}
+
+/* Topbar */
+.topbar{background:linear-gradient(135deg,#1d327b,#162666);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #25bbee}
+.topbar-left{display:flex;align-items:center;gap:12px}
+.topbar h1{color:#fff;font-size:18px;font-weight:700}
+.topbar-right{display:flex;align-items:center;gap:16px}
+.user-badge{color:#93b4d4;font-size:13px}.user-badge strong{color:#fff}
+.logout-btn{color:#93b4d4;text-decoration:none;font-size:13px;padding:6px 12px;border:1px solid rgba(255,255,255,.2);border-radius:6px;cursor:pointer}
+.logout-btn:hover{background:rgba(255,255,255,.1);color:#fff}
+
+/* Tabs */
+.tabs-row{max-width:1400px;margin:0 auto;padding:16px 24px 0;display:flex;align-items:flex-end;justify-content:space-between}
+.tabs{display:flex;gap:4px}
+.tab{padding:10px 20px;border-radius:8px 8px 0 0;border:1px solid #d0d8e8;border-bottom:none;background:#fff;color:#4a5568;cursor:pointer;font-family:Outfit;font-size:14px;font-weight:500}
+.tab:hover{color:#1d327b}
+.tab.active{background:#1d327b;color:#fff;border-color:#1d327b}
+.tabs-actions{display:flex;gap:8px;padding-bottom:2px}
+
+/* Buttons */
+.btn{padding:8px 16px;border-radius:8px;border:1px solid;font-family:Outfit;font-size:13px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn-primary{background:#1d327b;color:#fff;border-color:#1d327b}.btn-primary:hover{background:#162666}
+.btn-outline{background:#fff;color:#4a5568;border-color:#c3cfe2}.btn-outline:hover{border-color:#25bbee;color:#1d327b}
+.btn-green{background:#059669;color:#fff;border-color:#059669}.btn-green:hover{background:#047857}
+.btn-purple{background:#7C3AED;color:#fff;border-color:#7C3AED}.btn-purple:hover{background:#6D28D9}
+.btn-sm{padding:6px 12px;font-size:12px}
+
+/* Panel */
+.panel{max-width:1400px;margin:0 auto;padding:0 24px 24px}
+.panel-inner{background:#fff;border:1px solid #d0d8e8;border-radius:0 8px 8px 8px;padding:20px}
+
+/* Upload */
+.upload-wrap{text-align:center;padding:40px 20px}
+.upload-wrap h2{font-size:22px;font-weight:700;color:#1d327b;margin-bottom:8px}
+.upload-wrap>p{font-size:14px;color:#718096;margin-bottom:32px}
+.upload-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:560px;margin:0 auto;text-align:left}
+.upload-lbl{font-size:12px;font-weight:600;color:#4a5568;margin-bottom:6px}
+.upload-box{border:2px dashed #d0d8e8;border-radius:10px;padding:32px 20px;background:#f7fafc;cursor:pointer;transition:all .2s;text-align:center}
+.upload-box:hover{border-color:#1d327b;background:#eff4ff}
+.upload-icon{font-size:24px;margin-bottom:8px}
+.upload-box h3{font-size:14px;font-weight:600;margin-bottom:4px}
+.upload-box p{font-size:12px;color:#718096;margin:0}
+.upload-cta{display:inline-block;margin-top:12px;padding:6px 16px;border-radius:6px;font-size:12px;font-weight:600;color:#fff}
+
+/* KPIs */
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+.kpi{background:#fff;border:1px solid #d0d8e8;border-radius:8px;padding:12px 16px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:14px}
+.kpi:hover{border-color:#25bbee;box-shadow:0 3px 10px rgba(0,0,0,.06)}
+.kpi-label{font-size:10px;font-weight:600;color:#718096;text-transform:uppercase;letter-spacing:.7px;margin-bottom:3px}
+.kpi-value{font-size:22px;font-weight:700;line-height:1}
+.kpi-sub{font-size:11px;color:#a0aec0;margin-top:2px}
+.kpi-icon{font-size:22px;flex-shrink:0}
+
+/* Subtitle */
+.page-sub{font-size:12px;color:#718096;margin-bottom:18px}
+
+/* Table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{padding:8px 12px;text-align:left;color:#718096;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #e2e8f0;background:#f7fafc;position:sticky;top:0;z-index:2;white-space:nowrap}
+tbody td{padding:8px 12px;border-bottom:1px solid #e2e8f0;vertical-align:middle}
+tbody tr:hover{background:#f0f7ff}
+tbody tr:last-child td{border-bottom:none}
+.text-center{text-align:center}
+.table-wrap{border:1px solid #d0d8e8;border-radius:8px;overflow:hidden;margin-top:4px}
+.table-hdr{padding:12px 16px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;background:#fff}
+.table-title{font-size:14px;font-weight:600;color:#1a202c}
+.badge-count{font-size:11px;color:#718096;background:#f0f4f8;padding:3px 10px;border-radius:20px}
+.td-code{font-weight:600;color:#1d327b;white-space:nowrap}
+.td-desc{color:#4a5568;max-width:300px;line-height:1.4}
+.stock-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:5px;font-size:12px;font-weight:600}
+.sb-zero{background:#fed7d7;color:#9b2c2c}
+
+/* Consulta */
+.consulta-box{background:linear-gradient(135deg,#f0f4ff,#e8f0fe);border:1px solid #c3cfe2;border-radius:10px;padding:14px 18px;margin-bottom:14px}
+.consulta-box h3{font-size:13px;font-weight:700;color:#1d327b;margin-bottom:10px;display:flex;align-items:center;gap:5px}
+.consulta-fields{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.consulta-field{display:flex;flex-direction:column;gap:3px;position:relative}
+.consulta-field label{font-size:10px;font-weight:600;color:#4a5568;text-transform:uppercase;letter-spacing:.5px}
+.consulta-field input{font-family:Outfit;font-size:13px;padding:8px 12px;border:1.5px solid #c3cfe2;border-radius:7px;outline:none;background:#fff;min-width:260px}
+.consulta-field input:focus{border-color:#25bbee}
+.consulta-field.qty input{min-width:110px}
+.btn-consultar{padding:8px 18px;background:#1d327b;color:#fff;border:none;border-radius:7px;font-family:Outfit;font-size:13px;font-weight:600;cursor:pointer}
+.btn-consultar:hover{background:#162666}
+.autocomplete-list{position:absolute;top:calc(100% + 2px);left:0;right:0;background:#fff;border:1px solid #c3cfe2;border-radius:7px;box-shadow:0 4px 16px rgba(0,0,0,.1);z-index:50;max-height:180px;overflow-y:auto}
+.autocomplete-item{padding:8px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid #f0f4f8}
+.autocomplete-item:last-child{border-bottom:none}
+.autocomplete-item:hover{background:#f0f7ff}
+.autocomplete-item strong{color:#1d327b}
+.autocomplete-item span{color:#718096;font-size:12px;margin-left:6px}
+.resultado{margin-top:10px;padding:12px 16px;border-radius:8px;font-size:14px;font-weight:600;display:none;align-items:center;gap:10px}
+.resultado-ok{background:#dcfce7;border:1px solid #86efac;color:#15803D}
+.resultado-nok{background:#fee2e2;border:1px solid #fca5a5;color:#991b1b}
+.resultado-icon{font-size:18px;flex-shrink:0}
+.resultado-info{display:flex;flex-direction:column;gap:2px}
+.resultado-msg{font-size:13px;font-weight:700}
+.resultado-detail{font-size:12px;font-weight:400;opacity:.85}
+
+/* Modal */
+.modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:#fff;border-radius:12px;width:90%;max-width:680px;max-height:82vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal-header{padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.modal-header h3{font-size:15px;font-weight:700;color:#1d327b;margin:0}
+.modal-body{overflow-y:auto;flex:1}
+.modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:#718096;line-height:1;padding:2px 6px}.modal-close:hover{color:#1a202c}
+
+/* Toast */
+.toast{position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:8px;color:#fff;font-family:Outfit;font-size:13px;font-weight:500;z-index:2000;animation:slideIn .3s;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.toast-success{background:#16a34a}.toast-error{background:#dc2626}
+@keyframes slideIn{from{transform:translateX(110%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* Loading */
+.loading-overlay{display:none;position:fixed;inset:0;background:rgba(255,255,255,.9);z-index:999;align-items:center;justify-content:center;flex-direction:column;gap:12px}
+.loading-overlay.show{display:flex}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:36px;height:36px;border:3px solid #e2e8f0;border-top-color:#1d327b;border-radius:50%;animation:spin .8s linear infinite}
+#initLoading{display:flex;align-items:center;justify-content:center;height:60vh;flex-direction:column;gap:12px}
+.hidden{display:none!important}
+
+@media(max-width:768px){
+  .kpis{grid-template-columns:1fr 1fr}
+  .tabs-row{flex-direction:column;align-items:flex-start;gap:8px}
+}
+</style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <p style="font-size:13px;color:#718096">Processando planilha...</p>
+</div>
+
+<!-- KPI Modal -->
+<div class="modal-overlay" id="kpiModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modalTitle"></h3>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="badge-count" id="modalCount"></span>
+        <button class="modal-close" onclick="closeKpiModal()">✕</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <table>
+        <thead><tr>
+          <th>Código</th><th>Descrição</th><th class="text-center">Saldo</th>
+        </tr></thead>
+        <tbody id="modalBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Topbar -->
+<div class="topbar">
+  <div class="topbar-left">
+    <svg width="32" height="32" viewBox="0 0 200 200">
+      <rect x="10" y="10" width="180" height="180" rx="30" fill="#e30613"/>
+      <line x1="30" y1="30" x2="82" y2="95" stroke="#fff" stroke-width="10" stroke-linecap="round"/>
+      <polygon points="100,38 108,80 145,55 118,88 158,92 120,105 148,138 108,118 100,162 92,118 52,138 80,105 42,92 82,88 55,55 92,80" fill="#fff"/>
+    </svg>
+    <h1>Boxer Representantes</h1>
+  </div>
+  <div class="topbar-right">
+    <span class="user-badge">Usuário: <strong id="userName"></strong></span>
+    <span class="logout-btn" onclick="doLogout()">Sair</span>
+  </div>
+</div>
+
+<!-- Tabs row -->
+<div class="tabs-row">
+  <div class="tabs">
+    <div class="tab" onclick="location.href='disponibilidade.html'">Disponibilidade</div>
+    <div class="tab active">Sales 2.0</div>
+  </div>
+  <div class="tabs-actions">
+    <button class="btn btn-green btn-sm" onclick="document.getElementById('fileEnd').click()">↑ ENDEREÇO MAQ</button>
+    <button class="btn btn-purple btn-sm" onclick="document.getElementById('fileSta').click()">↑ STATUS ESTOQUE</button>
+  </div>
+</div>
+
+<!-- Hidden file inputs -->
+<input type="file" id="fileEnd" accept=".xlsx,.xls" class="hidden">
+<input type="file" id="fileSta" accept=".xlsx,.xls" class="hidden">
+
+<!-- Panel -->
+<div class="panel">
+  <div class="panel-inner">
+
+    <!-- Init loading -->
+    <div id="initLoading">
+      <div class="spinner"></div>
+      <p style="font-size:13px;color:#718096">Carregando dados...</p>
+    </div>
+
+    <!-- Upload section -->
+    <div id="uploadSection" class="upload-wrap hidden">
+      <h2>Sales 2.0 — Saldo de Produtos</h2>
+      <p>Carregue as duas planilhas para calcular o saldo disponível por produto.</p>
+      <div class="upload-grid">
+        <div>
+          <p class="upload-lbl">1. ENDEREÇO MAQ</p>
+          <div class="upload-box" onclick="document.getElementById('fileEnd').click()">
+            <div class="upload-icon">🏭</div>
+            <h3>ENDEREÇO MAQ</h3>
+            <p>Colunas R, S e BO</p>
+            <span class="upload-cta" style="background:#059669">Selecionar arquivo</span>
+          </div>
+        </div>
+        <div>
+          <p class="upload-lbl">2. STATUS ESTOQUE</p>
+          <div class="upload-box" onclick="document.getElementById('fileSta').click()">
+            <div class="upload-icon">📊</div>
+            <h3>STATUS ESTOQUE</h3>
+            <p>Colunas BY, BZ e DN</p>
+            <span class="upload-cta" style="background:#7C3AED">Selecionar arquivo</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboard" class="hidden">
+      <div class="page-sub" id="pageSub"></div>
+
+      <!-- Consulta de disponibilidade -->
+      <div class="consulta-box">
+        <h3>🔍 Consultar Disponibilidade</h3>
+        <div class="consulta-fields">
+          <div class="consulta-field">
+            <label>Produto (código ou descrição)</label>
+            <input type="text" id="consultaProduto" placeholder="Digite o código ou descrição..." autocomplete="off" oninput="onConsultaInput()">
+            <div class="autocomplete-list hidden" id="autocompleteList"></div>
+          </div>
+          <div class="consulta-field qty">
+            <label>Quantidade necessária</label>
+            <input type="number" id="consultaQtd" placeholder="Ex: 10" min="1" oninput="verificarDisponibilidade()">
+          </div>
+          <button class="btn-consultar" onclick="verificarDisponibilidade()">Verificar</button>
+        </div>
+        <div class="resultado" id="resultadoBox">
+          <div class="resultado-icon" id="resultadoIcon"></div>
+          <div class="resultado-info">
+            <div class="resultado-msg" id="resultadoMsg"></div>
+            <div class="resultado-detail" id="resultadoDetail"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="kpis">
+        <div class="kpi" onclick="openKpiModal('all','Todos os Produtos')">
+          <div class="kpi-icon">📦</div>
+          <div>
+            <div class="kpi-label">Total de Produtos</div>
+            <div class="kpi-value" id="kpiTotal" style="color:#1d327b">0</div>
+            <div class="kpi-sub">clique para ver</div>
+          </div>
+        </div>
+        <div class="kpi" onclick="openKpiModal('disp','Produtos Disponíveis')">
+          <div class="kpi-icon">✅</div>
+          <div>
+            <div class="kpi-label">Disponíveis</div>
+            <div class="kpi-value" id="kpiDisp" style="color:#15803D">0</div>
+            <div class="kpi-sub">saldo &gt; 0</div>
+          </div>
+        </div>
+        <div class="kpi" onclick="openKpiModal('indisp','Produtos Indisponíveis')">
+          <div class="kpi-icon">⚠️</div>
+          <div>
+            <div class="kpi-label">Indisponíveis</div>
+            <div class="kpi-value" id="kpiIndisp" style="color:#e30613">0</div>
+            <div class="kpi-sub">saldo ≤ 0</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /dashboard -->
+  </div>
+</div>
+
+<script>
+const SB_URL = 'https://agtzfllruggjbscuwdyi.supabase.co';
+const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFndHpmbGxydWdnamJzY3V3ZHlpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1NDQyMTcsImV4cCI6MjA5NzEyMDIxN30.A-u9ezGh7c921sf-L8Q6XVgUjU412mAAdkcID1Ajk8g';
+
+let SESSION = null;
+let enderecosMap = {}, statusMap = {}, dbRowId = null;
+let lastUpdateEnd = '', lastUpdateSta = '';
+
+// Auth
+function loadSession(){
+  const s = sessionStorage.getItem('boxer_session');
+  if(!s){location.href='index.html';return false;}
+  SESSION = JSON.parse(s); return true;
+}
+function doLogout(){sessionStorage.clear();location.href='index.html';}
+
+// Supabase
+async function sb(path,method='GET',body=null){
+  const hdrs={'Content-Type':'application/json','apikey':SB_ANON,
+    'Authorization':'Bearer '+(SESSION?.access_token||SB_ANON),
+    'Prefer':method==='POST'?'return=representation':method==='PATCH'?'return=minimal':''};
+  const opts={method,headers:hdrs};
+  if(body)opts.body=JSON.stringify(body);
+  const r=await fetch(SB_URL+'/rest/v1'+path,opts);
+  if(r.status===401){doLogout();return null;}
+  if(!r.ok){const e=await r.text();throw new Error(e);}
+  if(r.status===204||method==='PATCH')return null;
+  return r.json();
+}
+
+// Toast
+function toast(m,t='success'){
+  const d=document.createElement('div');
+  d.className='toast toast-'+t;d.textContent=m;
+  document.body.appendChild(d);setTimeout(()=>d.remove(),3500);
+}
+
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function showLoading(v){document.getElementById('loadingOverlay').classList.toggle('show',v);}
+
+// Load data
+async function loadData(){
+  const rows=await sb('/sales2_data?select=id,enderecos_map,status_map,last_update_enderecos,last_update_status&limit=1');
+  if(rows&&rows.length>0){
+    dbRowId=rows[0].id;
+    enderecosMap=rows[0].enderecos_map||{};
+    statusMap=rows[0].status_map||{};
+    lastUpdateEnd=rows[0].last_update_enderecos||'';
+    lastUpdateSta=rows[0].last_update_status||'';
+  }
+}
+
+// Save
+async function saveEnderecos(map,ts){
+  const body={enderecos_map:map,last_update_enderecos:ts};
+  if(dbRowId){await sb(`/sales2_data?id=eq.${dbRowId}`,'PATCH',body);}
+  else{const r=await sb('/sales2_data','POST',{...body,status_map:{},last_update_status:''});if(r&&r.length>0)dbRowId=r[0].id;}
+}
+async function saveStatus(map,ts){
+  const body={status_map:map,last_update_status:ts};
+  if(dbRowId){await sb(`/sales2_data?id=eq.${dbRowId}`,'PATCH',body);}
+  else{const r=await sb('/sales2_data','POST',{...body,enderecos_map:{},last_update_enderecos:''});if(r&&r.length>0)dbRowId=r[0].id;}
+}
+
+// Process ENDEREÇO MAQ
+function processEnderecos(file){
+  showLoading(true);
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const wb=XLSX.read(e.target.result,{type:'binary'});
+      const ws=wb.Sheets['sheet1']||wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1});
+      const map={};
+      rows.slice(1).forEach(row=>{
+        const codigo=String(row[17]||'').trim();
+        const descricao=String(row[18]||'').trim();
+        const quantidade=parseFloat(row[66])||0;
+        if(!codigo||codigo==='product_code')return;
+        if(map[codigo])map[codigo].quantidade+=quantidade;
+        else map[codigo]={descricao,quantidade};
+      });
+      enderecosMap=map;
+      lastUpdateEnd='ENDEREÇO MAQ: '+new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+      render(true);
+      saveEnderecos(map,lastUpdateEnd).then(()=>toast('ENDEREÇO MAQ atualizado!')).catch(e=>toast('Erro ao salvar: '+e.message,'error'));
+    }catch(err){toast('Erro ao processar ENDEREÇO MAQ: '+err.message,'error');}
+    showLoading(false);
+  };
+  reader.readAsBinaryString(file);
+}
+
+// Process STATUS ESTOQUE
+function processStatus(file){
+  showLoading(true);
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    try{
+      const wb=XLSX.read(e.target.result,{type:'binary'});
+      const ws=wb.Sheets['sheet1']||wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1});
+      const map={};
+      rows.slice(1).forEach(row=>{
+        const codigo=String(row[91]||'').trim();
+        const descricao=String(row[92]||'').trim();
+        const quantidade=parseFloat(row[132])||0;
+        if(!codigo||codigo==='product_code')return;
+        if(map[codigo])map[codigo].quantidade+=quantidade;
+        else map[codigo]={descricao,quantidade};
+      });
+      statusMap=map;
+      lastUpdateSta='STATUS ESTOQUE: '+new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+      render(true);
+
+      const newRes=extractReservas(rows);
+      try{
+        await saveStatus(map,lastUpdateSta);
+        await syncReservasToDisponibilidade(newRes,lastUpdateSta);
+        toast('STATUS ESTOQUE atualizado e reservas sincronizadas na Disponibilidade!');
+      }catch(errSave){
+        toast('Erro ao salvar: '+errSave.message,'error');
+      }
+    }catch(err){toast('Erro ao processar STATUS ESTOQUE: '+err.message,'error');}
+    showLoading(false);
+  };
+  reader.readAsBinaryString(file);
+}
+
+// Extrai reservas: soma quantity por product_code onde workflowNode_description
+// é 'Aguardando importação' (inclui pedidos atribuídos à própria Tekweld, ex. canais
+// marketplace/B2B sem cliente vinculado — excluí-los subestimava a reserva real)
+function extractReservas(rows){
+  if(!rows||rows.length<2)return{};
+  let hIdx=0,headers=rows[0];
+  if(!headers.includes('product_code')&&rows[1]&&rows[1].includes('product_code')){hIdx=1;headers=rows[1];}
+  const idxND=headers.indexOf('workflowNode_description');
+  const idxCod=headers.indexOf('product_code');
+  const idxQtd=headers.indexOf('quantity');
+  const newRes={};
+  rows.slice(hIdx+1).forEach(row=>{
+    const nd=idxND>=0?row[idxND]:null;
+    if(nd!=='Aguardando importação')return;
+    const cod=String(row[idxCod]||'').replace('.0','').trim();
+    const qtd=parseFloat(row[idxQtd])||0;
+    if(cod)newRes[cod]=(newRes[cod]||0)+qtd;
+  });
+  return newRes;
+}
+
+// Grava reservas direto na tabela usada pela aba Disponibilidade (dashboard_data)
+async function syncReservasToDisponibilidade(newRes,ts){
+  const rows=await sb('/dashboard_data?select=id,all_data&limit=1');
+  if(rows&&rows.length>0){
+    const row=rows[0];
+    const merged=(row.all_data||[]).map(r=>({...r,reservas:newRes[r.codigo]||0}));
+    await sb(`/dashboard_data?id=eq.${row.id}`,'PATCH',{reservas_map:newRes,all_data:merged,last_update:ts});
+  }else{
+    await sb('/dashboard_data','POST',{reservas_map:newRes,all_data:[],boxer_data:[],last_update:ts});
+  }
+}
+
+// Saldo
+function getSaldoItems(){
+  const codes=new Set([...Object.keys(enderecosMap),...Object.keys(statusMap)]);
+  return Array.from(codes).map(codigo=>{
+    const end=enderecosMap[codigo];
+    const sta=statusMap[codigo];
+    const saldo=(end?end.quantidade:0)-(sta?sta.quantidade:0);
+    return{codigo,descricao:(end&&end.descricao)||(sta&&sta.descricao)||'',saldo,disponivel:saldo>0};
+  }).sort((a,b)=>{
+    if(a.disponivel&&!b.disponivel)return-1;
+    if(!a.disponivel&&b.disponivel)return 1;
+    return a.codigo.localeCompare(b.codigo);
+  });
+}
+
+function getKpiItems(type){
+  const items=getSaldoItems();
+  if(type==='all')return items;
+  if(type==='disp')return items.filter(i=>i.disponivel);
+  if(type==='indisp')return items.filter(i=>!i.disponivel);
+  return[];
+}
+
+// Render
+function render(show){
+  document.getElementById('initLoading').classList.add('hidden');
+  const hasData=Object.keys(enderecosMap).length>0||Object.keys(statusMap).length>0;
+  const parts=[];
+  if(lastUpdateEnd)parts.push(lastUpdateEnd);
+  if(lastUpdateSta)parts.push(lastUpdateSta);
+  document.getElementById('pageSub').textContent=parts.join(' · ');
+
+  if(!show&&!hasData){
+    document.getElementById('uploadSection').classList.remove('hidden');
+    document.getElementById('dashboard').classList.add('hidden');
+    return;
+  }
+  document.getElementById('uploadSection').classList.add('hidden');
+  document.getElementById('dashboard').classList.remove('hidden');
+
+  const all=getSaldoItems();
+  document.getElementById('kpiTotal').textContent=all.length;
+  document.getElementById('kpiDisp').textContent=all.filter(i=>i.disponivel).length;
+  document.getElementById('kpiIndisp').textContent=all.filter(i=>!i.disponivel).length;
+}
+
+
+function openKpiModal(type,title){
+  const items=getKpiItems(type);
+  document.getElementById('modalTitle').textContent=title;
+  document.getElementById('modalCount').textContent=`${items.length} itens`;
+  document.getElementById('modalBody').innerHTML=items.length===0
+    ?'<tr><td colspan="3" style="padding:40px;text-align:center;color:#718096">Nenhum item nesta categoria.</td></tr>'
+    :items.map(item=>`<tr>
+        <td class="td-code" style="padding:8px 12px">${esc(item.codigo)}</td>
+        <td class="td-desc" style="padding:8px 12px">${esc(item.descricao)}</td>
+        <td class="text-center" style="padding:8px 12px;font-weight:700">
+          ${item.disponivel
+            ?`<span style="color:#15803D">${Number(item.saldo).toLocaleString('pt-BR')}</span>`
+            :`<span style="color:#e30613;font-size:12px">Indisponível</span>`}
+        </td>
+      </tr>`).join('');
+  document.getElementById('kpiModal').classList.add('show');
+}
+function closeKpiModal(){document.getElementById('kpiModal').classList.remove('show');}
+
+// ---- Consulta de disponibilidade ----
+let consultaItem = null; // item selecionado { codigo, descricao, saldo }
+
+function onConsultaInput() {
+  const q = document.getElementById('consultaProduto').value.trim().toLowerCase();
+  consultaItem = null;
+  ocultarResultado();
+
+  const list = document.getElementById('autocompleteList');
+  if (q.length < 2) { list.classList.add('hidden'); return; }
+
+  const items = getSaldoItems().filter(i =>
+    i.codigo.toLowerCase().includes(q) || i.descricao.toLowerCase().includes(q)
+  ).slice(0, 8);
+
+  if (!items.length) { list.classList.add('hidden'); return; }
+
+  list.innerHTML = items.map((i, idx) => `
+    <div class="autocomplete-item" onclick="selecionarItem(${idx})">
+      <strong>${esc(i.codigo)}</strong>
+      <span>${esc(i.descricao)}</span>
+    </div>
+  `).join('');
+  list._items = items;
+  list.classList.remove('hidden');
+}
+
+function selecionarItem(idx) {
+  const list = document.getElementById('autocompleteList');
+  consultaItem = list._items[idx];
+  document.getElementById('consultaProduto').value = `${consultaItem.codigo} — ${consultaItem.descricao}`;
+  list.classList.add('hidden');
+  document.getElementById('consultaQtd').focus();
+  verificarDisponibilidade();
+}
+
+function verificarDisponibilidade() {
+  if (!consultaItem) return;
+  const qtdInput = document.getElementById('consultaQtd').value;
+  const qtd = parseFloat(qtdInput);
+  if (!qtdInput || isNaN(qtd) || qtd <= 0) { ocultarResultado(); return; }
+
+  const box = document.getElementById('resultadoBox');
+  const icon = document.getElementById('resultadoIcon');
+  const msg = document.getElementById('resultadoMsg');
+  const detail = document.getElementById('resultadoDetail');
+
+  box.classList.remove('resultado-ok', 'resultado-nok');
+
+  if (qtd <= consultaItem.saldo) {
+    box.className = 'resultado resultado-ok';
+    icon.textContent = '✅';
+    msg.textContent = 'DISPONÍVEL PARA REQUISIÇÃO';
+    detail.textContent = `Quantidade solicitada: ${Number(qtd).toLocaleString('pt-BR')} un`;
+  } else {
+    box.className = 'resultado resultado-nok';
+    icon.textContent = '⚠️';
+    msg.textContent = 'QUANTIDADE INDISPONÍVEL — CONSULTAR INTERNAMENTE';
+    detail.textContent = `Quantidade solicitada: ${Number(qtd).toLocaleString('pt-BR')} un`;
+  }
+  box.style.display = 'flex';
+}
+
+function ocultarResultado() {
+  document.getElementById('resultadoBox').style.display = 'none';
+}
+
+// Init
+document.addEventListener('DOMContentLoaded',async()=>{
+  if(!loadSession())return;
+  document.getElementById('userName').textContent=sessionStorage.getItem('boxer_email')||'';
+
+  document.getElementById('fileEnd').addEventListener('change',e=>{if(e.target.files[0])processEnderecos(e.target.files[0]);e.target.value='';});
+  document.getElementById('fileSta').addEventListener('change',e=>{if(e.target.files[0])processStatus(e.target.files[0]);e.target.value='';});
+  document.getElementById('kpiModal').addEventListener('click',e=>{if(e.target===e.currentTarget)closeKpiModal();});
+  document.addEventListener('click', e => {
+    const list = document.getElementById('autocompleteList');
+    if (!e.target.closest('.consulta-field')) list.classList.add('hidden');
+  });
+
+  await loadData();
+  const hasData=Object.keys(enderecosMap).length>0||Object.keys(statusMap).length>0;
+  render(hasData);
+});
+</script>
+</body>
+</html>
