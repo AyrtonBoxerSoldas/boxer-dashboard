@@ -389,14 +389,14 @@ function processStatus(file){
   reader.onload=async e=>{
     try{
       const wb=XLSX.read(e.target.result,{type:'binary'});
-      const ws=wb.Sheets['sheet1']||wb.Sheets[wb.SheetNames[0]];
+      const ws=wb.Sheets['Report']||wb.Sheets['sheet1']||wb.Sheets[wb.SheetNames[0]];
       const rows=XLSX.utils.sheet_to_json(ws,{header:1});
       const map={};
       rows.slice(1).forEach(row=>{
-        const codigo=String(row[91]||'').trim();
-        const descricao=String(row[92]||'').trim();
-        const quantidade=parseFloat(row[132])||0;
-        if(!codigo||codigo==='product_code')return;
+        const codigo=String(row[4]||'').trim();
+        const descricao=String(row[5]||'').trim();
+        const quantidade=parseFloat(row[6])||0;
+        if(!codigo)return;
         if(map[codigo])map[codigo].quantidade+=quantidade;
         else map[codigo]={descricao,quantidade};
       });
@@ -418,22 +418,15 @@ function processStatus(file){
   reader.readAsBinaryString(file);
 }
 
-// Extrai reservas: soma quantity por product_code onde workflowNode_description
-// é 'Aguardando importação' (inclui pedidos atribuídos à própria Tekweld, ex. canais
-// marketplace/B2B sem cliente vinculado — excluí-los subestimava a reserva real)
+// Extrai reservas: soma "Resumo, Quantidade" por "Produto, Código". O relatório novo
+// (_sale_report_saleList) não tem mais o status detalhado por etapa — todo pedido nele
+// (PREPARED, PICKING ou APPROVED) já representa demanda aguardando importação
 function extractReservas(rows){
   if(!rows||rows.length<2)return{};
-  let hIdx=0,headers=rows[0];
-  if(!headers.includes('product_code')&&rows[1]&&rows[1].includes('product_code')){hIdx=1;headers=rows[1];}
-  const idxND=headers.indexOf('workflowNode_description');
-  const idxCod=headers.indexOf('product_code');
-  const idxQtd=headers.indexOf('quantity');
   const newRes={};
-  rows.slice(hIdx+1).forEach(row=>{
-    const nd=idxND>=0?row[idxND]:null;
-    if(nd!=='Aguardando importação')return;
-    const cod=String(row[idxCod]||'').replace('.0','').trim();
-    const qtd=parseFloat(row[idxQtd])||0;
+  rows.slice(1).forEach(row=>{
+    const cod=String(row[4]||'').replace('.0','').trim();
+    const qtd=parseFloat(row[6])||0;
     if(cod)newRes[cod]=(newRes[cod]||0)+qtd;
   });
   return newRes;
