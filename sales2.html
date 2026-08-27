@@ -245,7 +245,7 @@ tbody tr:last-child td{border-bottom:none}
           </div>
           <div class="consulta-field qty">
             <label>Quantidade necessária</label>
-            <input type="number" id="consultaQtd" placeholder="Ex: 10" min="1" oninput="verificarDisponibilidade()">
+            <input type="number" id="consultaQtd" placeholder="Ex: 10" min="1" oninput="onConsultaQtdInput()">
           </div>
           <button class="btn-consultar" onclick="verificarDisponibilidade()">Verificar</button>
         </div>
@@ -293,6 +293,83 @@ tbody tr:last-child td{border-bottom:none}
 <script>
 const SB_URL = 'https://agtzfllruggjbscuwdyi.supabase.co';
 const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFndHpmbGxydWdnamJzY3V3ZHlpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1NDQyMTcsImV4cCI6MjA5NzEyMDIxN30.A-u9ezGh7c921sf-L8Q6XVgUjU412mAAdkcID1Ajk8g';
+
+// ZenERP — consulta de estoque em tempo real (usada em verificarDisponibilidade)
+const ZENERP_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJkNjg1YzNmMy0xNmE3LTQwMTItODRjMy0yOGFkZTIzZTRmZDEiLCJzdWIiOiJicnVub0Bib3hlcnNvbGRhcy5jb20uYnIiLCJuYmYiOjE3NDc2NjU1NzQsImlhdCI6MTc0NzY2NTU3NCwibG9jYWxlIjoicHQtQlIiLCJ0aW1lWm9uZSI6IkFtZXJpY2EvU2FvX1BhdWxvIn0.S8KpowR1e5BbW7nUIMNF9zGZ_3GINOm6ct6fg2Y-nGA';
+
+// Chamada genérica de API que nunca lança exceção — retorna { ok, data }
+async function chamarApiJson(label, url, options) {
+  try {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      console.error(`[${label}] HTTP ${res.status}`);
+      return { ok: false, data: null };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (e) {
+    console.error(`[${label}] Falha na chamada:`, e);
+    return { ok: false, data: null };
+  }
+}
+
+// Busca o ESTOQUE_ATUAL no ZenERP para cada código informado, via stockAvailabilityCube
+// (usa quantity_balance; valores negativos são zerados antes de ir pro banco).
+// Retorna { values, matched, total }, ou null se a API falhar.
+async function fetchEstoqueZenerp(codigos) {
+  const jsonBodyEstoque = {
+    code: "/salesbreath/stockAvailabilityCube",
+    parameters: {
+      SHOW_PRODUCT: true,
+      SHOW_PRODUCT_PACKING: true,
+      SHOW_SCHEDULE: true
+    }
+  };
+
+  const resultadoEstoque = await chamarApiJson(
+    "Relatório Estoque",
+    "https://api.zenerp.app.br/system/data/dataSourceOpRead",
+    {
+      method: "POST",
+      headers: {
+        "Tenant": "boxer",
+        "Authorization": "Bearer " + ZENERP_TOKEN,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(jsonBodyEstoque)
+    }
+  );
+
+  if (!resultadoEstoque.ok) return null;
+
+  const json = resultadoEstoque.data;
+  if (!Array.isArray(json)) {
+    console.error('[Estoque] Resposta da API não veio como lista (formato inesperado):', json);
+    return null;
+  }
+  console.log(`[Estoque] API ZenERP retornou ${json.length} linha(s).`, json);
+
+  let matched = 0;
+  const naoEncontrados = [];
+  const values = codigos.map(codigo => {
+    // Pode haver mais de uma linha por produto (ex. schedule/qualidade diferentes) — soma todas.
+    const linhas = json.filter(row => String(row.product_code) === String(codigo));
+    if (!linhas.length) {
+      naoEncontrados.push(codigo);
+      return 0;
+    }
+    matched++;
+    const soma = linhas.reduce((s, row) => s + (Number(row.quantity_balance) || 0), 0);
+    return Math.max(soma, 0);
+  });
+
+  console.log(`[Estoque] ${matched}/${codigos.length} código(s) da planilha encontrados na resposta do ZenERP.`);
+  if (naoEncontrados.length) {
+    console.warn('[Estoque] Códigos NÃO encontrados na resposta do ZenERP:', naoEncontrados);
+  }
+
+  return { values, matched, total: codigos.length };
+}
 
 let SESSION = null;
 let enderecosMap = {}, statusMap = {}, dbRowId = null;
@@ -512,6 +589,13 @@ function closeKpiModal(){document.getElementById('kpiModal').classList.remove('s
 
 // ---- Consulta de disponibilidade ----
 let consultaItem = null; // item selecionado { codigo, descricao, saldo }
+let consultaRequestId = 0; // evita que uma resposta antiga do ZenERP sobrescreva uma consulta mais nova
+let qtdDebounceTimer = null; // debounce do campo de quantidade, pra não disparar 1 chamada ao ZenERP por tecla
+
+function onConsultaQtdInput() {
+  clearTimeout(qtdDebounceTimer);
+  qtdDebounceTimer = setTimeout(verificarDisponibilidade, 400);
+}
 
 function onConsultaInput() {
   const q = document.getElementById('consultaProduto').value.trim().toLowerCase();
@@ -546,7 +630,8 @@ function selecionarItem(idx) {
   verificarDisponibilidade();
 }
 
-function verificarDisponibilidade() {
+async function verificarDisponibilidade() {
+  clearTimeout(qtdDebounceTimer); // cancela um debounce pendente, caso a chamada tenha vindo do botão/autocomplete
   if (!consultaItem) return;
   const qtdInput = document.getElementById('consultaQtd').value;
   const qtd = parseFloat(qtdInput);
@@ -559,16 +644,52 @@ function verificarDisponibilidade() {
 
   box.classList.remove('resultado-ok', 'resultado-nok');
 
-  if (qtd <= consultaItem.saldo) {
+  // --- Cálculo original (saldo local = enderecosMap - statusMap) — comentado para reverter facilmente ---
+  // if (qtd <= consultaItem.saldo) {
+  //   box.className = 'resultado resultado-ok';
+  //   icon.textContent = '✅';
+  //   msg.textContent = 'DISPONÍVEL PARA REQUISIÇÃO';
+  //   detail.textContent = `Quantidade solicitada: ${Number(qtd).toLocaleString('pt-BR')} un`;
+  // } else {
+  //   box.className = 'resultado resultado-nok';
+  //   icon.textContent = '⚠️';
+  //   msg.textContent = 'QUANTIDADE INDISPONÍVEL — CONSULTAR INTERNAMENTE';
+  //   detail.textContent = `Quantidade solicitada: ${Number(qtd).toLocaleString('pt-BR')} un`;
+  // }
+  // box.style.display = 'flex';
+
+  // --- Novo: consulta estoque em tempo real via ZenERP ---
+  const requestId = ++consultaRequestId;
+  box.className = 'resultado';
+  icon.textContent = '⏳';
+  msg.textContent = 'Consultando estoque no ZenERP...';
+  detail.textContent = '';
+  box.style.display = 'flex';
+
+  const resultado = await fetchEstoqueZenerp([consultaItem.codigo]);
+  if (requestId !== consultaRequestId) return; // resposta obsoleta (usuário já mudou a consulta)
+
+  if (!resultado) {
+    box.className = 'resultado resultado-nok';
+    icon.textContent = '⚠️';
+    msg.textContent = 'ERRO AO CONSULTAR ZENERP — TENTE NOVAMENTE';
+    detail.textContent = `Não foi possível obter o estoque de ${consultaItem.codigo}.`;
+    box.style.display = 'flex';
+    return;
+  }
+
+  const estoqueAtual = resultado.values[0];
+
+  if (qtd <= estoqueAtual) {
     box.className = 'resultado resultado-ok';
     icon.textContent = '✅';
     msg.textContent = 'DISPONÍVEL PARA REQUISIÇÃO';
-    detail.textContent = `Quantidade solicitada: ${Number(qtd).toLocaleString('pt-BR')} un`;
+    detail.textContent = `Estoque ZenERP: ${Number(estoqueAtual).toLocaleString('pt-BR')} un · Solicitado: ${Number(qtd).toLocaleString('pt-BR')} un`;
   } else {
     box.className = 'resultado resultado-nok';
     icon.textContent = '⚠️';
     msg.textContent = 'QUANTIDADE INDISPONÍVEL — CONSULTAR INTERNAMENTE';
-    detail.textContent = `Quantidade solicitada: ${Number(qtd).toLocaleString('pt-BR')} un`;
+    detail.textContent = `Estoque ZenERP: ${Number(estoqueAtual).toLocaleString('pt-BR')} un · Solicitado: ${Number(qtd).toLocaleString('pt-BR')} un`;
   }
   box.style.display = 'flex';
 }
