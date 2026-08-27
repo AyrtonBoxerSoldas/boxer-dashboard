@@ -684,12 +684,12 @@ async function verificarDisponibilidade() {
     box.className = 'resultado resultado-ok';
     icon.textContent = '✅';
     msg.textContent = 'DISPONÍVEL PARA REQUISIÇÃO';
-    detail.textContent = `Estoque ZenERP: ${Number(estoqueAtual).toLocaleString('pt-BR')} un · Solicitado: ${Number(qtd).toLocaleString('pt-BR')} un`;
+    detail.textContent = `Quantidade solicitada: ${Number(qtd).toLocaleString('pt-BR')} un`;
   } else {
     box.className = 'resultado resultado-nok';
     icon.textContent = '⚠️';
     msg.textContent = 'QUANTIDADE INDISPONÍVEL — CONSULTAR INTERNAMENTE';
-    detail.textContent = `Estoque ZenERP: ${Number(estoqueAtual).toLocaleString('pt-BR')} un · Solicitado: ${Number(qtd).toLocaleString('pt-BR')} un`;
+    detail.textContent = `Quantidade solicitada: ${Number(qtd).toLocaleString('pt-BR')} un`;
   }
   box.style.display = 'flex';
 }
