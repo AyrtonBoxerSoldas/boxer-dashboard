@@ -353,6 +353,84 @@ tbody tr:last-child td{border-bottom:none}
 <script>
 const SB_URL = 'https://agtzfllruggjbscuwdyi.supabase.co';
 const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFndHpmbGxydWdnamJzY3V3ZHlpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1NDQyMTcsImV4cCI6MjA5NzEyMDIxN30.A-u9ezGh7c921sf-L8Q6XVgUjU412mAAdkcID1Ajk8g';
+
+// ZenERP — consulta de estoque em tempo real (usada no cálculo de stockStatus do COMEX)
+const ZENERP_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiJkNjg1YzNmMy0xNmE3LTQwMTItODRjMy0yOGFkZTIzZTRmZDEiLCJzdWIiOiJicnVub0Bib3hlcnNvbGRhcy5jb20uYnIiLCJuYmYiOjE3NDc2NjU1NzQsImlhdCI6MTc0NzY2NTU3NCwibG9jYWxlIjoicHQtQlIiLCJ0aW1lWm9uZSI6IkFtZXJpY2EvU2FvX1BhdWxvIn0.S8KpowR1e5BbW7nUIMNF9zGZ_3GINOm6ct6fg2Y-nGA';
+
+// Chamada genérica de API que nunca lança exceção — retorna { ok, data }
+async function chamarApiJson(label, url, options) {
+  try {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      console.error(`[${label}] HTTP ${res.status}`);
+      return { ok: false, data: null };
+    }
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (e) {
+    console.error(`[${label}] Falha na chamada:`, e);
+    return { ok: false, data: null };
+  }
+}
+
+// Busca o ESTOQUE_ATUAL no ZenERP para cada código informado, via stockAvailabilityCube
+// (usa quantity_balance; valores negativos são zerados antes de ir pro banco).
+// Retorna { values, matched, total }, ou null se a API falhar.
+async function fetchEstoqueZenerp(codigos) {
+  const jsonBodyEstoque = {
+    code: "/salesbreath/stockAvailabilityCube",
+    parameters: {
+      SHOW_PRODUCT: true,
+      SHOW_PRODUCT_PACKING: true,
+      SHOW_SCHEDULE: true
+    }
+  };
+
+  const resultadoEstoque = await chamarApiJson(
+    "Relatório Estoque",
+    "https://api.zenerp.app.br/system/data/dataSourceOpRead",
+    {
+      method: "POST",
+      headers: {
+        "Tenant": "boxer",
+        "Authorization": "Bearer " + ZENERP_TOKEN,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(jsonBodyEstoque)
+    }
+  );
+
+  if (!resultadoEstoque.ok) return null;
+
+  const json = resultadoEstoque.data;
+  if (!Array.isArray(json)) {
+    console.error('[Estoque] Resposta da API não veio como lista (formato inesperado):', json);
+    return null;
+  }
+  console.log(`[Estoque] API ZenERP retornou ${json.length} linha(s).`, json);
+
+  let matched = 0;
+  const naoEncontrados = [];
+  const values = codigos.map(codigo => {
+    // Pode haver mais de uma linha por produto (ex. schedule/qualidade diferentes) — soma todas.
+    const linhas = json.filter(row => String(row.product_code) === String(codigo));
+    if (!linhas.length) {
+      naoEncontrados.push(codigo);
+      return 0;
+    }
+    matched++;
+    const soma = linhas.reduce((s, row) => s + (Number(row.quantity_balance) || 0), 0);
+    return Math.max(soma, 0);
+  });
+
+  console.log(`[Estoque] ${matched}/${codigos.length} código(s) da planilha encontrados na resposta do ZenERP.`);
+  if (naoEncontrados.length) {
+    console.warn('[Estoque] Códigos NÃO encontrados na resposta do ZenERP:', naoEncontrados);
+  }
+
+  return { values, matched, total: codigos.length };
+}
+
 const CATS_ALLOWED = ["Grandes","Médias","Pequenas","Automação/Laser","Máscaras","Tochas","Acessórios de solda"];
 const TODAY = new Date();
 
@@ -493,7 +571,7 @@ function parseBoxerSheet(wb){
 function processFile(file){
   showLoading(true);
   const reader=new FileReader();
-  reader.onload=e=>{
+  reader.onload=async e=>{
     try{
       const wb=XLSX.read(e.target.result,{type:'binary',cellDates:true});
       const fupRaw=XLSX.utils.sheet_to_json(wb.Sheets['FUP Chegadas'],{header:1});
@@ -507,21 +585,50 @@ function processFile(file){
         const cod=row[2];if(!cod)return;
         dataMap[String(cod).trim()]={estoque:row[7]||0,v90:row[5]||0};
       });
-      const processed=fupData.filter(r=>{
+
+      const filteredRows=fupData.filter(r=>{
         const cat=String(r['CATEGORIA']||'').trim();return r['ITEM']&&CATS_ALLOWED.includes(cat);
-      }).map(r=>{
+      });
+
+      // --- Cálculo original (estoque vindo da aba "Data" da planilha) — comentado para reverter facilmente ---
+      // const processed=filteredRows.map(r=>{
+      //   const codigo=String(r['ITEM']||'').replace('.0','').trim();
+      //   const si=dataMap[codigo]||{estoque:null,v90:0};
+      //   const media=si.v90/3;
+      //   const cob=media>0?(si.estoque/media)*30:999;
+      //   let stockStatus='ok';
+      //   if(si.estoque===0||si.estoque===null)stockStatus='zero';
+      //   else if(cob<60)stockStatus='low';
+      //   return{codigo,descricao:r['DESCRIÇÃO']||'',categoria:String(r['CATEGORIA']||'').trim(),
+      //     status:String(r['STATUS']||'').trim(),qtd:r['QUANTIDADE']||0,
+      //     prevBoxer:parseDate(r['PREVISÃO ENTRADA BOXER']),
+      //     prevRep:parseDate(r['REPRESENTANTE - PREV ENTRADA']),
+      //     estoque:si.estoque,stockStatus,
+      //     cobertura:cob===999?null:Math.round(cob),
+      //     reservas:reservasMap[codigo]||0};
+      // });
+
+      // --- Novo: estoque em tempo real via ZenERP (v90 continua vindo da aba "Data", pra cobertura) ---
+      const codigosUnicos=[...new Set(filteredRows.map(r=>String(r['ITEM']||'').replace('.0','').trim()).filter(Boolean))];
+      const resultadoZen=await fetchEstoqueZenerp(codigosUnicos);
+      if(!resultadoZen) throw new Error('Não foi possível obter o estoque no ZenERP. Tente novamente.');
+      const estoqueZenMap={};
+      codigosUnicos.forEach((cod,i)=>{estoqueZenMap[cod]=resultadoZen.values[i];});
+
+      const processed=filteredRows.map(r=>{
         const codigo=String(r['ITEM']||'').replace('.0','').trim();
-        const si=dataMap[codigo]||{estoque:null,v90:0};
-        const media=si.v90/3;
-        const cob=media>0?(si.estoque/media)*30:999;
+        const v90=(dataMap[codigo]||{v90:0}).v90;
+        const estoque=estoqueZenMap[codigo];
+        const media=v90/3;
+        const cob=media>0?(estoque/media)*30:999;
         let stockStatus='ok';
-        if(si.estoque===0||si.estoque===null)stockStatus='zero';
+        if(estoque===0)stockStatus='zero';
         else if(cob<60)stockStatus='low';
         return{codigo,descricao:r['DESCRIÇÃO']||'',categoria:String(r['CATEGORIA']||'').trim(),
           status:String(r['STATUS']||'').trim(),qtd:r['QUANTIDADE']||0,
           prevBoxer:parseDate(r['PREVISÃO ENTRADA BOXER']),
           prevRep:parseDate(r['REPRESENTANTE - PREV ENTRADA']),
-          estoque:si.estoque,stockStatus,
+          estoque,stockStatus,
           cobertura:cob===999?null:Math.round(cob),
           reservas:reservasMap[codigo]||0};
       });
