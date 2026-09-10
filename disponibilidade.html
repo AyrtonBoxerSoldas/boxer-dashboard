@@ -431,6 +431,55 @@ async function fetchEstoqueZenerp(codigos) {
   return { values, matched, total: codigos.length };
 }
 
+// Busca as vendas dos últimos 90 dias no ZenERP (/fiscal/report/invoiceCube), mesma
+// lógica/parâmetros do script (Office Script) que hoje popula a coluna F da aba "Data".
+// Retorna um array de números na mesma ordem de `codigos`, ou null se a API falhar.
+async function fetchVendas90Zenerp(codigos) {
+  const hoje = new Date();
+  const dateEnd = hoje.toISOString().split('T')[0];
+  const dateStart90 = new Date(hoje);
+  dateStart90.setDate(dateStart90.getDate() - 90);
+  const formattedStart90 = dateStart90.toISOString().split('T')[0];
+
+  const jsonBody90 = {
+    code: "/fiscal/report/invoiceCube",
+    parameters: {
+      MULT: -1,
+      SHOW_PRODUCT: true,
+      DATE_START: `{${formattedStart90}}`,
+      DATE_END: `{${dateEnd}}`,
+      FISCAL_PROFILE_OPERATION_IDS: ["1003","1016","1061","1063","1068","1070","1071","1075","1076"]
+    }
+  };
+
+  const resultado90 = await chamarApiJson(
+    "Relatório 90 Dias",
+    "https://api.zenerp.app.br/system/data/dataSourceOpRead",
+    {
+      method: "POST",
+      headers: {
+        "Tenant": "boxer",
+        "Authorization": "Bearer " + ZENERP_TOKEN,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(jsonBody90)
+    }
+  );
+
+  if (!resultado90.ok) return null;
+
+  const json = resultado90.data;
+  if (!Array.isArray(json)) {
+    console.error('[Vendas90] Resposta da API não veio como lista (formato inesperado):', json);
+    return null;
+  }
+
+  return codigos.map(codigo => {
+    const linha = json.find(row => Object.values(row).some(v => typeof v === 'string' && v.includes(codigo)));
+    return linha ? (Number(linha['sum_quantity']) || 0) : 0;
+  });
+}
+
 const CATS_ALLOWED = ["Grandes","Médias","Pequenas","Automação/Laser","Máscaras","Tochas","Acessórios de solda"];
 const TODAY = new Date();
 
@@ -579,12 +628,14 @@ function processFile(file){
       const fupData=fupRaw.slice(4).map(row=>{
         const obj={};fupHeaders.forEach((h,i)=>{if(h)obj[h.toString().trim()]=row[i];});return obj;
       });
-      const dataRows=XLSX.utils.sheet_to_json(wb.Sheets['Data'],{header:1});
-      const dataMap={};
-      dataRows.slice(1).forEach(row=>{
-        const cod=row[2];if(!cod)return;
-        dataMap[String(cod).trim()]={estoque:row[7]||0,v90:row[5]||0};
-      });
+      // --- Aba "Data" da planilha (montada por script externo que consulta o ZenERP) —
+      // comentado para reverter facilmente; não é mais lida, nem precisa existir na planilha.
+      // const dataRows=XLSX.utils.sheet_to_json(wb.Sheets['Data'],{header:1});
+      // const dataMap={};
+      // dataRows.slice(1).forEach(row=>{
+      //   const cod=row[2];if(!cod)return;
+      //   dataMap[String(cod).trim()]={estoque:row[7]||0,v90:row[5]||0};
+      // });
 
       const filteredRows=fupData.filter(r=>{
         const cat=String(r['CATEGORIA']||'').trim();return r['ITEM']&&CATS_ALLOWED.includes(cat);
@@ -608,16 +659,22 @@ function processFile(file){
       //     reservas:reservasMap[codigo]||0};
       // });
 
-      // --- Novo: estoque em tempo real via ZenERP (v90 continua vindo da aba "Data", pra cobertura) ---
+      // --- Novo: estoque e vendas dos últimos 90 dias, ambos em tempo real via ZenERP ---
       const codigosUnicos=[...new Set(filteredRows.map(r=>String(r['ITEM']||'').replace('.0','').trim()).filter(Boolean))];
-      const resultadoZen=await fetchEstoqueZenerp(codigosUnicos);
+      const [resultadoZen,vendas90]=await Promise.all([
+        fetchEstoqueZenerp(codigosUnicos),
+        fetchVendas90Zenerp(codigosUnicos)
+      ]);
       if(!resultadoZen) throw new Error('Não foi possível obter o estoque no ZenERP. Tente novamente.');
+      if(!vendas90) throw new Error('Não foi possível obter as vendas dos últimos 90 dias no ZenERP. Tente novamente.');
       const estoqueZenMap={};
       codigosUnicos.forEach((cod,i)=>{estoqueZenMap[cod]=resultadoZen.values[i];});
+      const v90Map={};
+      codigosUnicos.forEach((cod,i)=>{v90Map[cod]=vendas90[i];});
 
       const processed=filteredRows.map(r=>{
         const codigo=String(r['ITEM']||'').replace('.0','').trim();
-        const v90=(dataMap[codigo]||{v90:0}).v90;
+        const v90=v90Map[codigo]||0;
         const estoque=estoqueZenMap[codigo];
         const media=v90/3;
         const cob=media>0?(estoque/media)*30:999;
