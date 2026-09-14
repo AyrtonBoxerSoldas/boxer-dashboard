@@ -1,3 +1,4 @@
+<!-- commit de teste -->
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -373,6 +374,7 @@ async function fetchEstoqueZenerp(codigos) {
 
 let SESSION = null;
 let enderecosMap = {}, statusMap = {}, dbRowId = null;
+let estoqueZenMap = {}; // cache do estoque ZenERP por código, usado pelos KPIs (Total/Disponíveis/Indisponíveis)
 let lastUpdateEnd = '', lastUpdateSta = '';
 
 // Auth
@@ -521,13 +523,35 @@ async function syncReservasToDisponibilidade(newRes,ts){
   }
 }
 
+// Busca no ZenERP o estoque atual dos códigos informados e atualiza o cache estoqueZenMap
+async function refreshEstoqueZen(codigos){
+  if(!codigos||!codigos.length)return;
+  const resultado=await fetchEstoqueZenerp(codigos);
+  if(!resultado)return;
+  codigos.forEach((cod,i)=>{estoqueZenMap[cod]=resultado.values[i];});
+}
+
 // Saldo
 function getSaldoItems(){
+  // --- Cálculo original (saldo local = enderecosMap - statusMap) — comentado para reverter facilmente ---
+  // const codes=new Set([...Object.keys(enderecosMap),...Object.keys(statusMap)]);
+  // return Array.from(codes).map(codigo=>{
+  //   const end=enderecosMap[codigo];
+  //   const sta=statusMap[codigo];
+  //   const saldo=(end?end.quantidade:0)-(sta?sta.quantidade:0);
+  //   return{codigo,descricao:(end&&end.descricao)||(sta&&sta.descricao)||'',saldo,disponivel:saldo>0};
+  // }).sort((a,b)=>{
+  //   if(a.disponivel&&!b.disponivel)return-1;
+  //   if(!a.disponivel&&b.disponivel)return 1;
+  //   return a.codigo.localeCompare(b.codigo);
+  // });
+
+  // --- Novo: saldo/disponibilidade calculados com o estoque em tempo real do ZenERP (cache estoqueZenMap) ---
   const codes=new Set([...Object.keys(enderecosMap),...Object.keys(statusMap)]);
   return Array.from(codes).map(codigo=>{
     const end=enderecosMap[codigo];
     const sta=statusMap[codigo];
-    const saldo=(end?end.quantidade:0)-(sta?sta.quantidade:0);
+    const saldo=estoqueZenMap[codigo]||0;
     return{codigo,descricao:(end&&end.descricao)||(sta&&sta.descricao)||'',saldo,disponivel:saldo>0};
   }).sort((a,b)=>{
     if(a.disponivel&&!b.disponivel)return-1;
@@ -545,7 +569,7 @@ function getKpiItems(type){
 }
 
 // Render
-function render(show){
+async function render(show){
   document.getElementById('initLoading').classList.add('hidden');
   const hasData=Object.keys(enderecosMap).length>0||Object.keys(statusMap).length>0;
   const parts=[];
@@ -561,6 +585,18 @@ function render(show){
   document.getElementById('uploadSection').classList.add('hidden');
   document.getElementById('dashboard').classList.remove('hidden');
 
+  // --- Cálculo original dos KPIs (saldo local = enderecosMap - statusMap) — comentado para reverter facilmente ---
+  // const all=getSaldoItems();
+  // document.getElementById('kpiTotal').textContent=all.length;
+  // document.getElementById('kpiDisp').textContent=all.filter(i=>i.disponivel).length;
+  // document.getElementById('kpiIndisp').textContent=all.filter(i=>!i.disponivel).length;
+
+  // --- Novo: KPIs (Total/Disponíveis/Indisponíveis) calculados com estoque em tempo real do ZenERP ---
+  document.getElementById('kpiTotal').textContent='...';
+  document.getElementById('kpiDisp').textContent='...';
+  document.getElementById('kpiIndisp').textContent='...';
+  const codigos=[...new Set([...Object.keys(enderecosMap),...Object.keys(statusMap)])];
+  await refreshEstoqueZen(codigos);
   const all=getSaldoItems();
   document.getElementById('kpiTotal').textContent=all.length;
   document.getElementById('kpiDisp').textContent=all.filter(i=>i.disponivel).length;
@@ -713,7 +749,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
 
   await loadData();
   const hasData=Object.keys(enderecosMap).length>0||Object.keys(statusMap).length>0;
-  render(hasData);
+  await render(hasData);
 });
 </script>
 </body>
