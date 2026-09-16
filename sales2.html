@@ -372,6 +372,62 @@ async function fetchEstoqueZenerp(codigos) {
   return { values, matched, total: codigos.length };
 }
 
+// Busca TODOS os produtos com estoque no ZenERP (sem filtrar por uma lista de códigos) — usado
+// para detectar itens que existem no ZenERP mas não constam em nenhuma planilha carregada
+// (ENDEREÇO MAQ / STATUS ESTOQUE), como o caso do código 703582.
+// Retorna [{codigo, descricao, saldo}], ou null se a API falhar.
+async function fetchTodosEstoqueZenerp() {
+  const jsonBodyEstoque = {
+    code: "/salesbreath/stockAvailabilityCube",
+    parameters: {
+      SHOW_PRODUCT: true,
+      SHOW_PRODUCT_PACKING: true,
+      SHOW_SCHEDULE: true
+    }
+  };
+
+  const resultadoEstoque = await chamarApiJson(
+    "Relatório Estoque (completo)",
+    "https://api.zenerp.app.br/system/data/dataSourceOpRead",
+    {
+      method: "POST",
+      headers: {
+        "Tenant": "boxer",
+        "Authorization": "Bearer " + ZENERP_TOKEN,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(jsonBodyEstoque)
+    }
+  );
+
+  if (!resultadoEstoque.ok) return null;
+
+  const json = resultadoEstoque.data;
+  if (!Array.isArray(json)) {
+    console.error('[Estoque completo] Resposta da API não veio como lista (formato inesperado):', json);
+    return null;
+  }
+
+  const somas = {};
+  const descricoes = {};
+  json.forEach(row => {
+    const codigo = String(row.product_code || '').trim();
+    if (!codigo) return;
+    somas[codigo] = (somas[codigo] || 0) + (Number(row.quantity_balance) || 0);
+    // Tenta achar a descrição do produto no formato retornado pela API; ajustar aqui caso
+    // o nome do campo real seja diferente do que a API costuma usar.
+    if (!descricoes[codigo]) {
+      descricoes[codigo] = row.product_description || row.description || row.product_name || '';
+    }
+  });
+
+  return Object.keys(somas).map(codigo => ({
+    codigo,
+    descricao: descricoes[codigo] || '',
+    saldo: Math.max(somas[codigo], 0)
+  }));
+}
+
 let SESSION = null;
 let enderecosMap = {}, statusMap = {}, dbRowId = null;
 let estoqueZenMap = {}; // cache do estoque ZenERP por código, usado pelos KPIs (Total/Disponíveis/Indisponíveis)
@@ -523,12 +579,28 @@ async function syncReservasToDisponibilidade(newRes,ts){
   }
 }
 
-// Busca no ZenERP o estoque atual dos códigos informados e atualiza o cache estoqueZenMap
-async function refreshEstoqueZen(codigos){
-  if(!codigos||!codigos.length)return;
-  const resultado=await fetchEstoqueZenerp(codigos);
-  if(!resultado)return;
-  codigos.forEach((cod,i)=>{estoqueZenMap[cod]=resultado.values[i];});
+// Busca no ZenERP o estoque atual de TODOS os produtos e atualiza o cache estoqueZenMap.
+// Também detecta códigos que existem no ZenERP mas não constam em enderecosMap/statusMap
+// (ex.: item cadastrado no catálogo, mas nunca importado via planilha) e os adiciona no
+// enderecosMap, salvando no banco (sales2_data) para que passem a aparecer nos KPIs e na consulta.
+async function refreshEstoqueZen(){
+  const todos=await fetchTodosEstoqueZenerp();
+  if(!todos)return;
+
+  todos.forEach(item=>{estoqueZenMap[item.codigo]=item.saldo;});
+
+  const conhecidos=new Set([...Object.keys(enderecosMap),...Object.keys(statusMap)]);
+  let houveNovo=false;
+  todos.forEach(item=>{
+    if(!conhecidos.has(item.codigo)){
+      enderecosMap[item.codigo]={descricao:item.descricao,quantidade:0};
+      houveNovo=true;
+    }
+  });
+  if(houveNovo){
+    try{ await saveEnderecos(enderecosMap,lastUpdateEnd); }
+    catch(e){ console.error('[Estoque completo] Falha ao salvar novos códigos no banco:', e); }
+  }
 }
 
 // Saldo
@@ -595,8 +667,7 @@ async function render(show){
   document.getElementById('kpiTotal').textContent='...';
   document.getElementById('kpiDisp').textContent='...';
   document.getElementById('kpiIndisp').textContent='...';
-  const codigos=[...new Set([...Object.keys(enderecosMap),...Object.keys(statusMap)])];
-  await refreshEstoqueZen(codigos);
+  await refreshEstoqueZen();
   const all=getSaldoItems();
   document.getElementById('kpiTotal').textContent=all.length;
   document.getElementById('kpiDisp').textContent=all.filter(i=>i.disponivel).length;
