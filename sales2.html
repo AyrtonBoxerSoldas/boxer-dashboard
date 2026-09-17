@@ -428,6 +428,67 @@ async function fetchTodosEstoqueZenerp() {
   }));
 }
 
+// Busca no ZenERP a quantidade reservada por produto: soma dos pedidos com status PREPARED,
+// via /sale/report/saleCube (confirmado com o comercial como a definição correta de "reserva").
+// Retorna { codigo: quantidade }, ou null se a API falhar.
+async function fetchReservasZenerp() {
+  const jsonBodyReservas = {
+    code: "/sale/report/saleCube",
+    parameters: {
+      SHOW_PRODUCT: true,
+      SHOW_PRODUCT_PACKING: true,
+      STATUS_LIST: ["PREPARED"]
+    }
+  };
+
+  const resultado = await chamarApiJson(
+    "Relatório Reservas (PREPARED)",
+    "https://api.zenerp.app.br/system/data/dataSourceOpRead",
+    {
+      method: "POST",
+      headers: {
+        "Tenant": "boxer",
+        "Authorization": "Bearer " + ZENERP_TOKEN,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(jsonBodyReservas)
+    }
+  );
+
+  if (!resultado.ok) return null;
+
+  const json = resultado.data;
+  if (!Array.isArray(json)) {
+    console.error('[Reservas] Resposta da API não veio como lista (formato inesperado):', json);
+    return null;
+  }
+  console.log(`[Reservas] API ZenERP retornou ${json.length} linha(s) com status PREPARED.`, json);
+
+  const reservas = {};
+  json.forEach(row => {
+    const codigo = String(row.product_code || '').trim();
+    if (!codigo) return;
+    // Nome exato do campo de quantidade ainda não confirmado com uma resposta real da API;
+    // tenta as variações já vistas em outros relatórios do ZenERP (ajustar aqui se necessário).
+    const qtd = Number(row.sum_quantity ?? row.quantity ?? row.quantity_balance ?? 0) || 0;
+    reservas[codigo] = (reservas[codigo] || 0) + qtd;
+  });
+
+  return reservas;
+}
+
+// Busca as reservas no ZenERP e sincroniza na tabela usada pela aba Disponibilidade (dashboard_data)
+async function refreshReservasZen() {
+  const reservas = await fetchReservasZenerp();
+  if (!reservas) return;
+  const ts = 'Reservas ZenERP: ' + new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  try {
+    await syncReservasToDisponibilidade(reservas, ts);
+  } catch (e) {
+    console.error('[Reservas] Falha ao sincronizar reservas na Disponibilidade:', e);
+  }
+}
+
 let SESSION = null;
 let enderecosMap = {}, statusMap = {}, dbRowId = null;
 let estoqueZenMap = {}; // cache do estoque ZenERP por código, usado pelos KPIs (Total/Disponíveis/Indisponíveis)
@@ -539,11 +600,14 @@ function processStatus(file){
       lastUpdateSta='STATUS ESTOQUE: '+new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
       render(true);
 
-      const newRes=extractReservas(rows);
+      // --- Original: reservas extraídas da própria planilha STATUS ESTOQUE — comentado para
+      // reverter facilmente. As reservas agora vêm do ZenERP (pedidos com status PREPARED),
+      // via refreshReservasZen(), chamada a cada acesso à página (ver init).
+      // const newRes=extractReservas(rows);
       try{
         await saveStatus(map,lastUpdateSta);
-        await syncReservasToDisponibilidade(newRes,lastUpdateSta);
-        toast('STATUS ESTOQUE atualizado e reservas sincronizadas na Disponibilidade!');
+        // await syncReservasToDisponibilidade(newRes,lastUpdateSta);
+        toast('STATUS ESTOQUE atualizado!');
       }catch(errSave){
         toast('Erro ao salvar: '+errSave.message,'error');
       }
@@ -821,6 +885,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
   await loadData();
   const hasData=Object.keys(enderecosMap).length>0||Object.keys(statusMap).length>0;
   await render(hasData);
+  await refreshReservasZen();
 });
 </script>
 </body>
