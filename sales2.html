@@ -44,7 +44,7 @@ body{font-family:Outfit,sans-serif;background:#f0f4f8;color:#1a202c}
 .upload-wrap{text-align:center;padding:40px 20px}
 .upload-wrap h2{font-size:22px;font-weight:700;color:#1d327b;margin-bottom:8px}
 .upload-wrap>p{font-size:14px;color:#718096;margin-bottom:32px}
-.upload-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:560px;margin:0 auto;text-align:left}
+.upload-grid{display:grid;grid-template-columns:1fr;gap:16px;max-width:320px;margin:0 auto;text-align:left}
 .upload-lbl{font-size:12px;font-weight:600;color:#4a5568;margin-bottom:6px}
 .upload-box{border:2px dashed #d0d8e8;border-radius:10px;padding:32px 20px;background:#f7fafc;cursor:pointer;transition:all .2s;text-align:center}
 .upload-box:hover{border-color:#1d327b;background:#eff4ff}
@@ -63,7 +63,8 @@ body{font-family:Outfit,sans-serif;background:#f0f4f8;color:#1a202c}
 .kpi-icon{font-size:22px;flex-shrink:0}
 
 /* Subtitle */
-.page-sub{font-size:12px;color:#718096;margin-bottom:18px}
+.page-sub{font-size:12px;color:#718096;margin-bottom:2px}
+.page-sub-minor{font-size:11px;color:#A0AEC0;margin-bottom:18px}
 
 /* Table */
 table{width:100%;border-collapse:collapse;font-size:13px}
@@ -186,8 +187,9 @@ tbody tr:last-child td{border-bottom:none}
     <div class="tab active">Sales 2.0</div>
   </div>
   <div class="tabs-actions">
-    <button class="btn btn-green btn-sm" onclick="document.getElementById('fileEnd').click()">↑ ENDEREÇO MAQ</button>
-    <button class="btn btn-purple btn-sm" onclick="document.getElementById('fileSta').click()">↑ STATUS ESTOQUE</button>
+    <button class="btn btn-green btn-sm" onclick="document.getElementById('fileEnd').click()">↑ ATUALIZAR ENDEREÇOS DO ESTOQUE</button>
+    <!-- Botão STATUS ESTOQUE removido (mantido comentado abaixo para reverter facilmente) -->
+    <!-- <button class="btn btn-purple btn-sm" onclick="document.getElementById('fileSta').click()">↑ STATUS ESTOQUE</button> -->
   </div>
 </div>
 
@@ -208,17 +210,19 @@ tbody tr:last-child td{border-bottom:none}
     <!-- Upload section -->
     <div id="uploadSection" class="upload-wrap hidden">
       <h2>Sales 2.0 — Saldo de Produtos</h2>
-      <p>Carregue as duas planilhas para calcular o saldo disponível por produto.</p>
+      <p>Carregue a planilha para atualizar os endereços/descrições dos produtos. O saldo em si é calculado automaticamente com o estoque em tempo real do ZenERP.</p>
       <div class="upload-grid">
         <div>
-          <p class="upload-lbl">1. ENDEREÇO MAQ</p>
+          <p class="upload-lbl">ATUALIZAR ENDEREÇOS DO ESTOQUE</p>
           <div class="upload-box" onclick="document.getElementById('fileEnd').click()">
             <div class="upload-icon">🏭</div>
-            <h3>ENDEREÇO MAQ</h3>
+            <h3>ATUALIZAR ENDEREÇOS DO ESTOQUE</h3>
             <p>Colunas R, S e BO</p>
             <span class="upload-cta" style="background:#059669">Selecionar arquivo</span>
           </div>
         </div>
+        <!-- Upload STATUS ESTOQUE removido (mantido comentado abaixo para reverter facilmente) -->
+        <!--
         <div>
           <p class="upload-lbl">2. STATUS ESTOQUE</p>
           <div class="upload-box" onclick="document.getElementById('fileSta').click()">
@@ -228,12 +232,14 @@ tbody tr:last-child td{border-bottom:none}
             <span class="upload-cta" style="background:#7C3AED">Selecionar arquivo</span>
           </div>
         </div>
+        -->
       </div>
     </div>
 
     <!-- Dashboard -->
     <div id="dashboard" class="hidden">
-      <div class="page-sub" id="pageSub"></div>
+      <div class="page-sub" id="pageSubEstoque"></div>
+      <div class="page-sub page-sub-minor" id="pageSubPlanilha"></div>
 
       <!-- Consulta de disponibilidade -->
       <div class="consulta-box">
@@ -493,6 +499,7 @@ let SESSION = null;
 let enderecosMap = {}, statusMap = {}, dbRowId = null;
 let estoqueZenMap = {}; // cache do estoque ZenERP por código, usado pelos KPIs (Total/Disponíveis/Indisponíveis)
 let lastUpdateEnd = '', lastUpdateSta = '';
+let lastUpdateEstoqueZen = ''; // marca da última vez que a atualização geral de estoque (ZenERP) rodou com sucesso — só em memória, não persistida
 
 // Auth
 function loadSession(){
@@ -569,53 +576,50 @@ function processEnderecos(file){
         else map[codigo]={descricao,quantidade};
       });
       enderecosMap=map;
-      lastUpdateEnd='ENDEREÇO MAQ: '+new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+      lastUpdateEnd='ATUALIZAR ENDEREÇOS DO ESTOQUE: '+new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
       render(true);
-      saveEnderecos(map,lastUpdateEnd).then(()=>toast('ENDEREÇO MAQ atualizado!')).catch(e=>toast('Erro ao salvar: '+e.message,'error'));
-    }catch(err){toast('Erro ao processar ENDEREÇO MAQ: '+err.message,'error');}
+      saveEnderecos(map,lastUpdateEnd).then(()=>toast('Endereços do estoque atualizados!')).catch(e=>toast('Erro ao salvar: '+e.message,'error'));
+    }catch(err){toast('Erro ao processar planilha de endereços: '+err.message,'error');}
     showLoading(false);
   };
   reader.readAsBinaryString(file);
 }
 
-// Process STATUS ESTOQUE
-function processStatus(file){
-  showLoading(true);
-  const reader=new FileReader();
-  reader.onload=async e=>{
-    try{
-      const wb=XLSX.read(e.target.result,{type:'binary'});
-      const ws=wb.Sheets['Report']||wb.Sheets['sheet1']||wb.Sheets[wb.SheetNames[0]];
-      const rows=XLSX.utils.sheet_to_json(ws,{header:1});
-      const map={};
-      rows.slice(1).forEach(row=>{
-        const codigo=String(row[4]||'').trim();
-        const descricao=String(row[5]||'').trim();
-        const quantidade=parseFloat(row[6])||0;
-        if(!codigo)return;
-        if(map[codigo])map[codigo].quantidade+=quantidade;
-        else map[codigo]={descricao,quantidade};
-      });
-      statusMap=map;
-      lastUpdateSta='STATUS ESTOQUE: '+new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-      render(true);
-
-      // --- Original: reservas extraídas da própria planilha STATUS ESTOQUE — comentado para
-      // reverter facilmente. As reservas agora vêm do ZenERP (pedidos com status PREPARED),
-      // via refreshReservasZen(), chamada a cada acesso à página (ver init).
-      // const newRes=extractReservas(rows);
-      try{
-        await saveStatus(map,lastUpdateSta);
-        // await syncReservasToDisponibilidade(newRes,lastUpdateSta);
-        toast('STATUS ESTOQUE atualizado!');
-      }catch(errSave){
-        toast('Erro ao salvar: '+errSave.message,'error');
-      }
-    }catch(err){toast('Erro ao processar STATUS ESTOQUE: '+err.message,'error');}
-    showLoading(false);
-  };
-  reader.readAsBinaryString(file);
-}
+// Process STATUS ESTOQUE — botão removido da UI (ver "ATUALIZAR ENDEREÇOS DO ESTOQUE"), função
+// mantida comentada para reverter facilmente caso o upload precise voltar.
+// function processStatus(file){
+//   showLoading(true);
+//   const reader=new FileReader();
+//   reader.onload=async e=>{
+//     try{
+//       const wb=XLSX.read(e.target.result,{type:'binary'});
+//       const ws=wb.Sheets['Report']||wb.Sheets['sheet1']||wb.Sheets[wb.SheetNames[0]];
+//       const rows=XLSX.utils.sheet_to_json(ws,{header:1});
+//       const map={};
+//       rows.slice(1).forEach(row=>{
+//         const codigo=String(row[4]||'').trim();
+//         const descricao=String(row[5]||'').trim();
+//         const quantidade=parseFloat(row[6])||0;
+//         if(!codigo)return;
+//         if(map[codigo])map[codigo].quantidade+=quantidade;
+//         else map[codigo]={descricao,quantidade};
+//       });
+//       statusMap=map;
+//       lastUpdateSta='STATUS ESTOQUE: '+new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+//       render(true);
+//       const newRes=extractReservas(rows);
+//       try{
+//         await saveStatus(map,lastUpdateSta);
+//         await syncReservasToDisponibilidade(newRes,lastUpdateSta);
+//         toast('STATUS ESTOQUE atualizado e reservas sincronizadas na Disponibilidade!');
+//       }catch(errSave){
+//         toast('Erro ao salvar: '+errSave.message,'error');
+//       }
+//     }catch(err){toast('Erro ao processar STATUS ESTOQUE: '+err.message,'error');}
+//     showLoading(false);
+//   };
+//   reader.readAsBinaryString(file);
+// }
 
 // Extrai reservas: soma "Resumo, Quantidade" por "Produto, Código". O relatório novo
 // (_sale_report_saleList) não tem mais o status detalhado por etapa — todo pedido nele
@@ -651,6 +655,7 @@ async function refreshEstoqueZen(){
   const todos=await fetchTodosEstoqueZenerp();
   if(!todos)return;
 
+  lastUpdateEstoqueZen=new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
   todos.forEach(item=>{estoqueZenMap[item.codigo]=item.saldo;});
 
   const conhecidos=new Set([...Object.keys(enderecosMap),...Object.keys(statusMap)]);
@@ -708,10 +713,6 @@ function getKpiItems(type){
 async function render(show){
   document.getElementById('initLoading').classList.add('hidden');
   const hasData=Object.keys(enderecosMap).length>0||Object.keys(statusMap).length>0;
-  const parts=[];
-  if(lastUpdateEnd)parts.push(lastUpdateEnd);
-  if(lastUpdateSta)parts.push(lastUpdateSta);
-  document.getElementById('pageSub').textContent=parts.join(' · ');
 
   if(!show&&!hasData){
     document.getElementById('uploadSection').classList.remove('hidden');
@@ -731,7 +732,12 @@ async function render(show){
   document.getElementById('kpiTotal').textContent='...';
   document.getElementById('kpiDisp').textContent='...';
   document.getElementById('kpiIndisp').textContent='...';
+  document.getElementById('pageSubEstoque').textContent='Atualizando estoque no ZenERP...';
+  document.getElementById('pageSubPlanilha').textContent=lastUpdateEnd?'Última atualização via planilha: '+lastUpdateEnd.replace('ATUALIZAR ENDEREÇOS DO ESTOQUE: ',''):'';
+
   await refreshEstoqueZen();
+
+  document.getElementById('pageSubEstoque').textContent=lastUpdateEstoqueZen?'Estoque atualizado (ZenERP) em: '+lastUpdateEstoqueZen:'Não foi possível atualizar o estoque agora.';
   const all=getSaldoItems();
   document.getElementById('kpiTotal').textContent=all.length;
   document.getElementById('kpiDisp').textContent=all.filter(i=>i.disponivel).length;
@@ -875,7 +881,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
   document.getElementById('userName').textContent=sessionStorage.getItem('boxer_email')||'';
 
   document.getElementById('fileEnd').addEventListener('change',e=>{if(e.target.files[0])processEnderecos(e.target.files[0]);e.target.value='';});
-  document.getElementById('fileSta').addEventListener('change',e=>{if(e.target.files[0])processStatus(e.target.files[0]);e.target.value='';});
+  // document.getElementById('fileSta').addEventListener('change',e=>{if(e.target.files[0])processStatus(e.target.files[0]);e.target.value='';});
   document.getElementById('kpiModal').addEventListener('click',e=>{if(e.target===e.currentTarget)closeKpiModal();});
   document.addEventListener('click', e => {
     const list = document.getElementById('autocompleteList');
