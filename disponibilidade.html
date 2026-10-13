@@ -373,11 +373,51 @@ async function chamarApiJson(label, url, options) {
   }
 }
 
-// Busca o ESTOQUE_ATUAL no ZenERP para cada código informado, via stockAvailabilityCube
-// (usa quantity_balance; valores negativos são zerados antes de ir pro banco).
-// Retorna { values, matched, total }, ou null se a API falhar.
+// --- Original: ESTOQUE_ATUAL = quantity_balance do stockAvailabilityCube — comentado para
+// reverter facilmente. Substituído pela lógica de ESTOQUE_ATUAL_ZENERP.md (estoque físico em
+// endereços MAQUINAS/PECAS, menos a saída já comprometida).
+// async function fetchEstoqueZenerp(codigos) {
+//   const jsonBodyEstoque = {
+//     code: "/salesbreath/stockAvailabilityCube",
+//     parameters: { SHOW_PRODUCT: true, SHOW_PRODUCT_PACKING: true, SHOW_SCHEDULE: true }
+//   };
+//   const resultadoEstoque = await chamarApiJson(
+//     "Relatório Estoque",
+//     "https://api.zenerp.app.br/system/data/dataSourceOpRead",
+//     { method: "POST", headers: { "Tenant": "boxer", "Authorization": "Bearer " + ZENERP_TOKEN, "Content-Type": "application/json" }, body: JSON.stringify(jsonBodyEstoque) }
+//   );
+//   if (!resultadoEstoque.ok) return null;
+//   const json = resultadoEstoque.data;
+//   if (!Array.isArray(json)) return null;
+//   let matched = 0;
+//   const values = codigos.map(codigo => {
+//     const linhas = json.filter(row => String(row.product_code) === String(codigo));
+//     if (!linhas.length) return 0;
+//     matched++;
+//     const soma = linhas.reduce((s, row) => s + (Number(row.quantity_balance) || 0), 0);
+//     return Math.max(soma, 0);
+//   });
+//   return { values, matched, total: codigos.length };
+// }
+
+// Busca o ESTOQUE_ATUAL no ZenERP para cada código informado, combinando duas chamadas
+// (ver ESTOQUE_ATUAL_ZENERP.md):
+//   1. /material/report/stockCube — estoque físico, filtrado aos endereços MAQUINAS/PECAS.
+//   2. /salesbreath/stockAvailabilityCube — quantity_outgoing (saída já comprometida, negativo).
+// ESTOQUE_ATUAL = max(0, soma(quantity físico MAQUINAS/PECAS) - soma(quantity_outgoing)).
+// A existência do produto é determinada pela resposta do Passo 2: se o código não aparecer lá,
+// o valor final é 0, mesmo que apareça no Passo 1.
+// Retorna { values, matched, total }, ou null se qualquer uma das chamadas falhar.
 async function fetchEstoqueZenerp(codigos) {
-  const jsonBodyEstoque = {
+  const jsonBodyFisico = {
+    code: "/material/report/stockCube",
+    parameters: {
+      SHOW_PRODUCT: true,
+      SHOW_PRODUCT_PACKING: true,
+      SHOW_ADDRESS: true
+    }
+  };
+  const jsonBodyDisponibilidade = {
     code: "/salesbreath/stockAvailabilityCube",
     parameters: {
       SHOW_PRODUCT: true,
@@ -386,8 +426,8 @@ async function fetchEstoqueZenerp(codigos) {
     }
   };
 
-  const resultadoEstoque = await chamarApiJson(
-    "Relatório Estoque",
+  const resultadoFisico = await chamarApiJson(
+    "Relatório Estoque Físico",
     "https://api.zenerp.app.br/system/data/dataSourceOpRead",
     {
       method: "POST",
@@ -396,31 +436,50 @@ async function fetchEstoqueZenerp(codigos) {
         "Authorization": "Bearer " + ZENERP_TOKEN,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(jsonBodyEstoque)
+      body: JSON.stringify(jsonBodyFisico)
     }
   );
+  if (!resultadoFisico.ok) return null;
 
-  if (!resultadoEstoque.ok) return null;
+  const resultadoDisponibilidade = await chamarApiJson(
+    "Relatório Disponibilidade/Saída",
+    "https://api.zenerp.app.br/system/data/dataSourceOpRead",
+    {
+      method: "POST",
+      headers: {
+        "Tenant": "boxer",
+        "Authorization": "Bearer " + ZENERP_TOKEN,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(jsonBodyDisponibilidade)
+    }
+  );
+  if (!resultadoDisponibilidade.ok) return null;
 
-  const json = resultadoEstoque.data;
-  if (!Array.isArray(json)) {
-    console.error('[Estoque] Resposta da API não veio como lista (formato inesperado):', json);
+  const jsonFisicoBruto = resultadoFisico.data;
+  const jsonDisponibilidade = resultadoDisponibilidade.data;
+  if (!Array.isArray(jsonFisicoBruto) || !Array.isArray(jsonDisponibilidade)) {
+    console.error('[Estoque] Resposta da API não veio como lista (formato inesperado):', jsonFisicoBruto, jsonDisponibilidade);
     return null;
   }
-  console.log(`[Estoque] API ZenERP retornou ${json.length} linha(s).`, json);
+  console.log(`[Estoque] stockCube retornou ${jsonFisicoBruto.length} linha(s); stockAvailabilityCube retornou ${jsonDisponibilidade.length} linha(s).`);
+
+  const jsonFisico = jsonFisicoBruto.filter(row => row.address_tags === 'MAQUINAS' || row.address_tags === 'PECAS');
 
   let matched = 0;
   const naoEncontrados = [];
   const values = codigos.map(codigo => {
-    // Pode haver mais de uma linha por produto (ex. schedule/qualidade diferentes) — soma todas.
-    const linhas = json.filter(row => String(row.product_code) === String(codigo));
-    if (!linhas.length) {
+    const linhasDisponibilidade = jsonDisponibilidade.filter(row => String(row.product_code) === String(codigo));
+    if (!linhasDisponibilidade.length) {
       naoEncontrados.push(codigo);
       return 0;
     }
     matched++;
-    const soma = linhas.reduce((s, row) => s + (Number(row.quantity_balance) || 0), 0);
-    return Math.max(soma, 0);
+    const somaFisico = jsonFisico
+      .filter(row => String(row.product_code) === String(codigo))
+      .reduce((s, row) => s + (Number(row.quantity) || 0), 0);
+    const somaSaida = linhasDisponibilidade.reduce((s, row) => s + (Number(row.quantity_outgoing) || 0), 0);
+    return Math.max(somaFisico - somaSaida, 0);
   });
 
   console.log(`[Estoque] ${matched}/${codigos.length} código(s) da planilha encontrados na resposta do ZenERP.`);
