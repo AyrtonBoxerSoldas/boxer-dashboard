@@ -404,7 +404,9 @@ async function chamarApiJson(label, url, options) {
 // (ver ESTOQUE_ATUAL_ZENERP.md):
 //   1. /material/report/stockCube — estoque físico, filtrado aos endereços MAQUINAS/PECAS.
 //   2. /salesbreath/stockAvailabilityCube — quantity_outgoing (saída já comprometida, negativo).
-// ESTOQUE_ATUAL = max(0, soma(quantity físico MAQUINAS/PECAS) - soma(quantity_outgoing)).
+// ESTOQUE_ATUAL = max(0, soma(quantity físico MAQUINAS/PECAS) + soma(quantity_outgoing)).
+// (quantity_outgoing já vem negativo — por isso é soma, não subtração; subtrair um valor
+// já negativo inflaria o estoque em vez de descontar a saída comprometida.)
 // A existência do produto é determinada pela resposta do Passo 2: se o código não aparecer lá,
 // o valor final é 0, mesmo que apareça no Passo 1.
 // Retorna { values, matched, total }, ou null se qualquer uma das chamadas falhar.
@@ -479,7 +481,9 @@ async function fetchEstoqueZenerp(codigos) {
       .filter(row => String(row.product_code) === String(codigo))
       .reduce((s, row) => s + (Number(row.quantity) || 0), 0);
     const somaSaida = linhasDisponibilidade.reduce((s, row) => s + (Number(row.quantity_outgoing) || 0), 0);
-    return Math.max(somaFisico - somaSaida, 0);
+    // quantity_outgoing já vem negativo (saída comprometida) — por isso aqui é soma, não subtração:
+    // somaFisico - somaSaida(negativo) resultaria em SOMAR a saída ao estoque, inflando o valor.
+    return Math.max(somaFisico + somaSaida, 0);
   });
 
   console.log(`[Estoque] ${matched}/${codigos.length} código(s) da planilha encontrados na resposta do ZenERP.`);

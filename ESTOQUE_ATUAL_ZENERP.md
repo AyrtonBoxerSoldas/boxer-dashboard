@@ -19,12 +19,19 @@ API do ZenERP:
 A fórmula final, por produto, é:
 
 ```
-ESTOQUE_ATUAL = max(0, soma(quantity nos registros MAQUINAS/PECAS) - soma(quantity_outgoing))
+ESTOQUE_ATUAL = max(0, soma(quantity nos registros MAQUINAS/PECAS) + soma(quantity_outgoing))
 ```
 
-Como `quantity_outgoing` já vem negativo, subtraí-lo soma de volta o valor
-absoluto da saída ao estoque físico (ou seja, a fórmula reduz o estoque físico
-pela quantidade pendente de saída). O resultado nunca é menor que zero.
+Como `quantity_outgoing` já vem negativo, **somá-lo** (e não subtraí-lo) ao
+estoque físico é que desconta corretamente a quantidade pendente de saída —
+subtrair um valor já negativo teria o efeito oposto (somaria o valor absoluto
+de volta ao estoque, inflando-o). O resultado nunca é menor que zero.
+
+> **Correção (2026-10-14):** a versão original deste documento descrevia a
+> fórmula com subtração (`- soma(quantity_outgoing)`), o que é um bug — como
+> `quantity_outgoing` já é negativo, subtraí-lo soma seu valor absoluto de
+> volta ao estoque em vez de descontá-lo. A fórmula correta usa soma (`+`),
+> como mostrado acima.
 
 ## Autenticação e endpoint base
 
@@ -119,7 +126,7 @@ const somaFisico = jsonFisico
 const somaSaida = linhasDaAvailabilityCube
   .reduce((s, row) => s + (Number(row.quantity_outgoing) || 0), 0);
 
-const estoqueAtual = Math.max(somaFisico - somaSaida, 0);
+const estoqueAtual = Math.max(somaFisico + somaSaida, 0); // somaSaida já é negativo
 ```
 
 Onde `linhasDaAvailabilityCube` são os registros do Passo 2 cujo
@@ -214,7 +221,7 @@ function fetchEstoqueZenerp(codigos):
         somaFisico = soma(jsonFisico.filtrar(row => row.product_code == codigo).mapear(row => row.quantity))
         somaSaida  = soma(linhasDisponibilidade.mapear(row => row.quantity_outgoing))  // já é negativo
 
-        values.adicionar(max(0, somaFisico - somaSaida))
+        values.adicionar(max(0, somaFisico + somaSaida))  // somaSaida já é negativo
 
     retorna { values, matched, total: codigos.length }
 ```
