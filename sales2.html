@@ -153,10 +153,20 @@ tbody tr:last-child td{border-bottom:none}
         <button class="modal-close" onclick="closeKpiModal()">✕</button>
       </div>
     </div>
+    <div class="modal-toolbar" style="display:flex;align-items:center;gap:12px;padding:0 20px 12px;flex-wrap:wrap">
+      <label style="font-size:12px;color:#718096">Tipo:
+        <select id="modalFiltroTipo" onchange="onModalFiltroTipoChange()" style="margin-left:6px">
+          <option value="todos">Todos</option>
+          <option value="MAQUINAS">Somente máquinas</option>
+          <option value="PECAS">Somente peças</option>
+        </select>
+      </label>
+      <button class="btn btn-outline btn-sm" id="btnToggleSaldo" onclick="toggleModalSaldo()" type="button">Esconder Saldo</button>
+    </div>
     <div class="modal-body">
       <table>
         <thead><tr>
-          <th>Código</th><th>Descrição</th><th class="text-center">Saldo</th>
+          <th>Código</th><th>Descrição</th><th class="text-center" id="thSaldo">Saldo</th>
         </tr></thead>
         <tbody id="modalBody"></tbody>
       </table>
@@ -434,6 +444,54 @@ async function fetchTodosEstoqueZenerp() {
   }));
 }
 
+// Busca no ZenERP a que tipo de endereço cada produto pertence (MAQUINAS/PECAS), via
+// /material/report/stockCube (mesma fonte usada em disponibilidade.html). Um produto pode
+// aparecer em endereços de mais de um tipo — por isso o valor é um array de tags.
+// Retorna { codigo: ['MAQUINAS'|'PECAS', ...] }, ou null se a API falhar.
+async function fetchTipoEnderecoZenerp() {
+  const jsonBodyFisico = {
+    code: "/material/report/stockCube",
+    parameters: {
+      SHOW_PRODUCT: true,
+      SHOW_PRODUCT_PACKING: true,
+      SHOW_ADDRESS: true
+    }
+  };
+
+  const resultado = await chamarApiJson(
+    "Relatório Tipo de Endereço",
+    "https://api.zenerp.app.br/system/data/dataSourceOpRead",
+    {
+      method: "POST",
+      headers: {
+        "Tenant": "boxer",
+        "Authorization": "Bearer " + ZENERP_TOKEN,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(jsonBodyFisico)
+    }
+  );
+
+  if (!resultado.ok) return null;
+
+  const json = resultado.data;
+  if (!Array.isArray(json)) {
+    console.error('[Tipo de Endereço] Resposta da API não veio como lista (formato inesperado):', json);
+    return null;
+  }
+
+  const tipos = {};
+  json.forEach(row => {
+    const codigo = String(row.product_code || '').trim();
+    const tag = row.address_tags;
+    if (!codigo || (tag !== 'MAQUINAS' && tag !== 'PECAS')) return;
+    if (!tipos[codigo]) tipos[codigo] = [];
+    if (!tipos[codigo].includes(tag)) tipos[codigo].push(tag);
+  });
+
+  return tipos;
+}
+
 // Busca no ZenERP a quantidade reservada por produto: soma dos pedidos com status PREPARED,
 // via /sale/report/saleCube (confirmado com o comercial como a definição correta de "reserva").
 // Retorna { codigo: quantidade }, ou null se a API falhar.
@@ -498,6 +556,7 @@ async function refreshReservasZen() {
 let SESSION = null;
 let enderecosMap = {}, statusMap = {}, dbRowId = null;
 let estoqueZenMap = {}; // cache do estoque ZenERP por código, usado pelos KPIs (Total/Disponíveis/Indisponíveis)
+let tipoEnderecoMap = {}; // cache código -> ['MAQUINAS'|'PECAS', ...], usado no filtro Máquinas/Peças do modal
 let lastUpdateEnd = '', lastUpdateSta = '';
 let lastUpdateEstoqueZen = ''; // marca da última vez que a atualização geral de estoque (ZenERP) rodou com sucesso — só em memória, não persistida
 
@@ -652,8 +711,13 @@ async function syncReservasToDisponibilidade(newRes,ts){
 // (ex.: item cadastrado no catálogo, mas nunca importado via planilha) e os adiciona no
 // enderecosMap, salvando no banco (sales2_data) para que passem a aparecer nos KPIs e na consulta.
 async function refreshEstoqueZen(){
-  const todos=await fetchTodosEstoqueZenerp();
+  const [todos,tipos]=await Promise.all([
+    fetchTodosEstoqueZenerp(),
+    fetchTipoEnderecoZenerp()
+  ]);
   if(!todos)return;
+
+  if(tipos)tipoEnderecoMap=tipos;
 
   lastUpdateEstoqueZen=new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
   todos.forEach(item=>{estoqueZenMap[item.codigo]=item.saldo;});
@@ -693,7 +757,8 @@ function getSaldoItems(){
     const end=enderecosMap[codigo];
     const sta=statusMap[codigo];
     const saldo=estoqueZenMap[codigo]||0;
-    return{codigo,descricao:(end&&end.descricao)||(sta&&sta.descricao)||'',saldo,disponivel:saldo>0};
+    const tipos=tipoEnderecoMap[codigo]||[];
+    return{codigo,descricao:(end&&end.descricao)||(sta&&sta.descricao)||'',saldo,disponivel:saldo>0,tipos};
   }).sort((a,b)=>{
     if(a.disponivel&&!b.disponivel)return-1;
     if(!a.disponivel&&b.disponivel)return 1;
@@ -745,23 +810,47 @@ async function render(show){
 }
 
 
+let modalItems=[]; // itens da categoria atual do modal (antes do filtro de tipo), pra re-renderizar sem reabrir
+let modalEsconderSaldo=false; // preferência fica só em memória, resetando a cada reload da página
+
 function openKpiModal(type,title){
-  const items=getKpiItems(type);
+  modalItems=getKpiItems(type);
   document.getElementById('modalTitle').textContent=title;
+  document.getElementById('modalFiltroTipo').value='todos';
+  renderModalBody();
+  document.getElementById('kpiModal').classList.add('show');
+}
+
+function onModalFiltroTipoChange(){
+  renderModalBody();
+}
+
+function toggleModalSaldo(){
+  modalEsconderSaldo=!modalEsconderSaldo;
+  renderModalBody();
+}
+
+function renderModalBody(){
+  const filtroTipo=document.getElementById('modalFiltroTipo').value;
+  const items=filtroTipo==='todos'?modalItems:modalItems.filter(i=>(i.tipos||[]).includes(filtroTipo));
+
   document.getElementById('modalCount').textContent=`${items.length} itens`;
+  document.getElementById('thSaldo').style.display=modalEsconderSaldo?'none':'';
+  document.getElementById('btnToggleSaldo').textContent=modalEsconderSaldo?'Mostrar Saldo':'Esconder Saldo';
+
   document.getElementById('modalBody').innerHTML=items.length===0
-    ?'<tr><td colspan="3" style="padding:40px;text-align:center;color:#718096">Nenhum item nesta categoria.</td></tr>'
+    ?`<tr><td colspan="3" style="padding:40px;text-align:center;color:#718096">Nenhum item ${filtroTipo==='todos'?'nesta categoria':'nessa combinação de filtros'}.</td></tr>`
     :items.map(item=>`<tr>
         <td class="td-code" style="padding:8px 12px">${esc(item.codigo)}</td>
         <td class="td-desc" style="padding:8px 12px">${esc(item.descricao)}</td>
-        <td class="text-center" style="padding:8px 12px;font-weight:700">
+        <td class="text-center" style="padding:8px 12px;font-weight:700${modalEsconderSaldo?';display:none':''}">
           ${item.disponivel
             ?`<span style="color:#15803D">${Number(item.saldo).toLocaleString('pt-BR')}</span>`
             :`<span style="color:#e30613;font-size:12px">Indisponível</span>`}
         </td>
       </tr>`).join('');
-  document.getElementById('kpiModal').classList.add('show');
 }
+
 function closeKpiModal(){document.getElementById('kpiModal').classList.remove('show');}
 
 // ---- Consulta de disponibilidade ----
