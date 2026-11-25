@@ -812,8 +812,10 @@ async function render(show){
 
 let modalItems=[]; // itens da categoria atual do modal (antes do filtro de tipo), pra re-renderizar sem reabrir
 let modalEsconderSaldo=false; // preferência fica só em memória, resetando a cada reload da página
+let currentModalType='all'; // tipo do modal aberto no momento ('all'/'disp'/'indisp')
 
 function openKpiModal(type,title){
+  currentModalType=type;
   modalItems=getKpiItems(type);
   document.getElementById('modalTitle').textContent=title;
   document.getElementById('modalFiltroTipo').value='todos';
@@ -834,8 +836,12 @@ function renderModalBody(){
   const filtroTipo=document.getElementById('modalFiltroTipo').value;
   const items=filtroTipo==='todos'?modalItems:modalItems.filter(i=>(i.tipos||[]).includes(filtroTipo));
 
+  // Na aba "Disponíveis" a coluna Saldo fica sempre escondida e o botão de alternar não aparece
+  const esconderSaldo=currentModalType==='disp'?true:modalEsconderSaldo;
+
   document.getElementById('modalCount').textContent=`${items.length} itens`;
-  document.getElementById('thSaldo').style.display=modalEsconderSaldo?'none':'';
+  document.getElementById('thSaldo').style.display=esconderSaldo?'none':'';
+  document.getElementById('btnToggleSaldo').style.display=currentModalType==='disp'?'none':'';
   document.getElementById('btnToggleSaldo').textContent=modalEsconderSaldo?'Mostrar Saldo':'Esconder Saldo';
 
   document.getElementById('modalBody').innerHTML=items.length===0
@@ -843,7 +849,7 @@ function renderModalBody(){
     :items.map(item=>`<tr>
         <td class="td-code" style="padding:8px 12px">${esc(item.codigo)}</td>
         <td class="td-desc" style="padding:8px 12px">${esc(item.descricao)}</td>
-        <td class="text-center" style="padding:8px 12px;font-weight:700${modalEsconderSaldo?';display:none':''}">
+        <td class="text-center" style="padding:8px 12px;font-weight:700${esconderSaldo?';display:none':''}">
           ${item.disponivel
             ?`<span style="color:#15803D">${Number(item.saldo).toLocaleString('pt-BR')}</span>`
             :`<span style="color:#e30613;font-size:12px">Indisponível</span>`}
